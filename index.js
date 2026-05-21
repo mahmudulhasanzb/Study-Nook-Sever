@@ -4,11 +4,24 @@ const dotenv = require('dotenv');
 dotenv.config();
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const authMiddleware = require('./authMiddleware');
 
 const port = process.env.PORT || 8000;
 const uri = process.env.MONGODB_URI;
+
+app.use(helmet());
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' }
+});
+app.use('/api', apiLimiter);
 
 const allowedOrigins = [
   'http://localhost:3050',
@@ -164,6 +177,10 @@ app.get('/rooms', async (req, res) => {
 app.get('/rooms/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid room ID' });
+    }
+
     const room = await roomsCollection.findOne({ _id: new ObjectId(id) });
     if (!room) return res.status(404).json({ error: 'Room not found' });
 
@@ -183,6 +200,10 @@ app.get('/rooms/:id', async (req, res) => {
 app.get('/rooms/:id/booked-slots', async (req, res) => {
   const { id } = req.params;
   const { date } = req.query;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid room ID' });
+  }
 
   if (!date) {
     return res.status(400).json({ error: 'Date query parameter is required' });
@@ -267,6 +288,10 @@ app.get('/api/rooms/my', authMiddleware, async (req, res) => {
 
 app.put('/api/rooms/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid room ID' });
+  }
+
   const { name, image, floor, capacity, amenities, description, hourlyRate } = req.body;
 
   try {
@@ -303,6 +328,9 @@ app.put('/api/rooms/:id', authMiddleware, async (req, res) => {
 
 app.delete('/api/rooms/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid room ID' });
+  }
 
   try {
     const room = await roomsCollection.findOne({ _id: new ObjectId(id) });
@@ -330,8 +358,8 @@ app.delete('/api/rooms/:id', authMiddleware, async (req, res) => {
 app.post('/api/bookings', authMiddleware, async (req, res) => {
   const { roomId, date, slots } = req.body;
 
-  if (!roomId || !date || !slots || !Array.isArray(slots) || slots.length === 0) {
-    return res.status(400).json({ error: 'Room ID, date, and slots are required' });
+  if (!roomId || !ObjectId.isValid(roomId) || !date || !slots || !Array.isArray(slots) || slots.length === 0) {
+    return res.status(400).json({ error: 'Valid Room ID, date, and slots are required' });
   }
 
   try {
@@ -404,6 +432,9 @@ app.get('/api/bookings', authMiddleware, async (req, res) => {
 
 app.patch('/api/bookings/:id/cancel', authMiddleware, async (req, res) => {
   const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid booking ID' });
+  }
 
   try {
     const booking = await bookingsCollection.findOne({ _id: new ObjectId(id) });
