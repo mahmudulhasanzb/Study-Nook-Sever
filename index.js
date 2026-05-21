@@ -10,9 +10,8 @@ const authMiddleware = require('./authMiddleware');
 const port = process.env.PORT || 8000;
 const uri = process.env.MONGODB_URI;
 
-// Dynamic CORS configuration
 const allowedOrigins = [
-  'http://localhost:3050', // Allow dev client port 3050 if relevant, or default 3000
+  'http://localhost:3050',
   'http://localhost:3000',
   process.env.FRONTEND_URL
 ].filter(Boolean);
@@ -59,23 +58,21 @@ async function getDb() {
     bookingsCollection = db.collection('bookings');
     usersCollection = db.collection('user');
     sessionsCollection = db.collection('session');
-    console.log('Connected to MongoDB Atlas — study-nook DB');
+    console.log('Connected to MongoDB Atlas');
   }
   return db;
 }
 
-// Middleware to ensure DB connection
 app.use(async (req, res, next) => {
   try {
     await getDb();
     next();
   } catch (error) {
-    console.error('Failed to connect to MongoDB:', error);
+    console.error('Database connection failed:', error);
     res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
-// Helper to find BetterAuth user by ID
 const findUserById = async (id) => {
   if (!id) return null;
   try {
@@ -91,9 +88,7 @@ const findUserById = async (id) => {
   }
 };
 
-// ----------------------------------------------------------------
-// Auth — Current User (proxy to BetterAuth user data)
-// ----------------------------------------------------------------
+// Auth
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await findUserById(req.user.id);
@@ -107,17 +102,12 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
-// ----------------------------------------------------------------
-// Rooms — Public
-// ----------------------------------------------------------------
-
-// Featured rooms (latest 6)
+// Rooms (Public)
 app.get('/featured', async (req, res) => {
   try {
     const cursor = roomsCollection.find().sort({ createdAt: -1 }).limit(6);
     const result = await cursor.toArray();
 
-    // Enrich with owner info from BetterAuth users
     const enriched = await Promise.all(result.map(async (room) => {
       const owner = await findUserById(room.ownerId);
       return {
@@ -135,7 +125,6 @@ app.get('/featured', async (req, res) => {
   }
 });
 
-// All rooms with filters
 app.get('/rooms', async (req, res) => {
   try {
     const { search, amenities, minRate, maxRate, floor } = req.query;
@@ -172,14 +161,12 @@ app.get('/rooms', async (req, res) => {
   }
 });
 
-// Single room by ID
 app.get('/rooms/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const room = await roomsCollection.findOne({ _id: new ObjectId(id) });
     if (!room) return res.status(404).json({ error: 'Room not found' });
 
-    // Enrich with owner data
     const owner = await findUserById(room.ownerId);
     res.json({
       ...room,
@@ -193,7 +180,6 @@ app.get('/rooms/:id', async (req, res) => {
   }
 });
 
-// Booked slots for a room on a date
 app.get('/rooms/:id/booked-slots', async (req, res) => {
   const { id } = req.params;
   const { date } = req.query;
@@ -220,11 +206,7 @@ app.get('/rooms/:id/booked-slots', async (req, res) => {
   }
 });
 
-// ----------------------------------------------------------------
-// Rooms — Protected (owner only)
-// ----------------------------------------------------------------
-
-// Add Room
+// Rooms (Protected)
 app.post('/api/rooms', authMiddleware, async (req, res) => {
   const { name, description, image, floor, capacity, hourlyRate, amenities } = req.body;
 
@@ -243,14 +225,12 @@ app.post('/api/rooms', authMiddleware, async (req, res) => {
       amenities: Array.isArray(amenities)
         ? amenities
         : (amenities ? amenities.split(',').map(a => a.trim()).filter(Boolean) : []),
-      ownerId: req.user.id,   // BetterAuth userId is a string
+      ownerId: req.user.id,
       bookingCount: 0,
       createdAt: new Date()
     };
 
     const result = await roomsCollection.insertOne(newRoom);
-
-    // Enrich with owner info for response
     const owner = await findUserById(req.user.id);
     res.status(201).json({
       message: 'Room listed successfully!',
@@ -263,7 +243,6 @@ app.post('/api/rooms', authMiddleware, async (req, res) => {
   }
 });
 
-// Get my listed rooms
 app.get('/api/rooms/my', authMiddleware, async (req, res) => {
   try {
     const userIdStr = req.user.id.toString();
@@ -286,7 +265,6 @@ app.get('/api/rooms/my', authMiddleware, async (req, res) => {
   }
 });
 
-// Update owned room
 app.put('/api/rooms/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
   const { name, image, floor, capacity, amenities, description, hourlyRate } = req.body;
@@ -323,7 +301,6 @@ app.put('/api/rooms/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// Delete owned room
 app.delete('/api/rooms/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
 
@@ -337,7 +314,6 @@ app.delete('/api/rooms/:id', authMiddleware, async (req, res) => {
 
     await roomsCollection.deleteOne({ _id: new ObjectId(id) });
 
-    // Cancel all associated bookings
     await bookingsCollection.updateMany(
       { roomId: new ObjectId(id) },
       { $set: { status: 'cancelled' } }
@@ -350,11 +326,7 @@ app.delete('/api/rooms/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// ----------------------------------------------------------------
 // Bookings
-// ----------------------------------------------------------------
-
-// Create booking
 app.post('/api/bookings', authMiddleware, async (req, res) => {
   const { roomId, date, slots } = req.body;
 
@@ -370,7 +342,6 @@ app.post('/api/bookings', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'You cannot book your own room' });
     }
 
-    // Conflict check
     const conflict = await bookingsCollection.findOne({
       roomId: new ObjectId(roomId),
       date: date,
@@ -385,7 +356,7 @@ app.post('/api/bookings', authMiddleware, async (req, res) => {
     const totalCost = room.hourlyRate * slots.length;
 
     const newBooking = {
-      userId: req.user.id,          // BetterAuth string userId
+      userId: req.user.id,
       roomId: new ObjectId(roomId),
       date: date,
       slots: slots,
@@ -396,7 +367,6 @@ app.post('/api/bookings', authMiddleware, async (req, res) => {
 
     const result = await bookingsCollection.insertOne(newBooking);
 
-    // Increment booking count
     await roomsCollection.updateOne(
       { _id: new ObjectId(roomId) },
       { $inc: { bookingCount: 1 } }
@@ -409,7 +379,6 @@ app.post('/api/bookings', authMiddleware, async (req, res) => {
   }
 });
 
-// Get my bookings
 app.get('/api/bookings', authMiddleware, async (req, res) => {
   try {
     const pipeline = [
@@ -433,7 +402,6 @@ app.get('/api/bookings', authMiddleware, async (req, res) => {
   }
 });
 
-// Cancel booking
 app.patch('/api/bookings/:id/cancel', authMiddleware, async (req, res) => {
   const { id } = req.params;
 
